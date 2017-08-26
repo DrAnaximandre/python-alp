@@ -356,6 +356,7 @@ def pull_config(config, verbose=False, dry_run=False):
             output, err = p.communicate()
         if verbose:
             click.echo(click.style('{}\n'.format(output)))
+            click.echo(click.style('{}\n'.format(err)))
             click.echo()
         if err is not None:  # pragma: no cover
             res = False
@@ -365,22 +366,26 @@ def pull_config(config, verbose=False, dry_run=False):
 def action_config(config, action, verbose=False, force=False, dry_run=False):
     res = True
     commands = build_commands(config, action, verbose, dry_run)
-    for command in commands:
-        if verbose:
-            click.echo(click.style(
-                'Running command:', fg=col_info))
-            click.echo('{}\n'.format(' '.join(command)))
+    try:
+        for command in commands:
+            if verbose:
+                click.echo(click.style(
+                    'Running command:', fg=col_info))
+                click.echo('{}\n'.format(' '.join(command)))
 
-        output = None
-        err = None
-        if dry_run is False:
-            p = subprocess.Popen(' '.join(command), shell=True, stdout=PIPE,
-                                 stderr=PIPE)
-            output, err = p.communicate()
-        if verbose and output is not None:
-            click.echo(click.style('{}\n'.format(output)))
-        if err is not None:  # pragma: no cover
-            res = False
+            output = None
+            err = None
+            if dry_run is False:
+                p = subprocess.Popen(' '.join(command), shell=True, stdout=PIPE,
+                                     stderr=PIPE)
+                output, err = p.communicate()
+            if verbose and output is not None:
+                click.echo(click.style('{}\n'.format(output)))
+                click.echo(click.style('{}\n'.format(err)))
+            if err is not None:  # pragma: no cover
+                res = False
+    except KeyboardInterrupt:
+        raise KeyboardInterrupt('Please check the status of the configuration')
     return res
 
 
@@ -392,7 +397,7 @@ def make_volumes(root_folder, volumes):
 
 def gen_containers_config(conf_folder, name_suffix='', port_shift=0,
                           root_folder=None, controlers=1, workers_sklearn=1,
-                          workers_keras=1):
+                          workers_keras=1, cpu=False):
     """ Generates containers config parsable with ALP CLI
 
     This function generates a JSON configuration usable with ALP CLI.
@@ -436,7 +441,7 @@ def gen_containers_config(conf_folder, name_suffix='', port_shift=0,
     ports = [(8080 + port_shift, 15672), (5672 + port_shift, 5672)]
     broker['ports'] = ['{}:{}'.format(p1, p2) for p1, p2 in ports]
     broker['name'] = 'rabbitmq_sched{}'.format(name_suffix)
-    broker['container_name'] = 'rabbitmq:3-management'
+    broker['container_name'] = 'rabbitmq:management'
     broker['mode'] = '-d'
 
     # results db config
@@ -470,7 +475,7 @@ def gen_containers_config(conf_folder, name_suffix='', port_shift=0,
         t_volumes = make_volumes(root_folder, volumes)
         worker['volumes'] = t_volumes + [conf_full_folder]
         worker['name'] = 'sklearn_worker{}_{}'.format(name_suffix, i)
-        worker['container_name'] = 'tboquet/full7hc5workeralpsk'
+        worker['container_name'] = 'tboquet/full8c51workeralpsk'
         worker['mode'] = '-d'
         workers.append(worker)
 
@@ -480,8 +485,14 @@ def gen_containers_config(conf_folder, name_suffix='', port_shift=0,
         t_volumes = make_volumes(root_folder, volumes)
         worker['volumes'] = t_volumes + [conf_full_folder]
         worker['name'] = 'keras_worker{}_{}'.format(name_suffix, i)
-        worker['container_name'] = 'tboquet/full7hc5workeralpk'
-        worker['NV_GPU'] = '0'
+        image = 'tboquet/full8c51workeralp'
+        if cpu:
+            image += 'cpuk'
+        else:
+            image += 'k'
+        worker['container_name'] = image
+        if not cpu:
+            worker['NV_GPU'] = '0'
         worker['mode'] = '-d'
         workers.append(worker)
 
@@ -493,8 +504,9 @@ def gen_containers_config(conf_folder, name_suffix='', port_shift=0,
         t_volumes = make_volumes(root_folder, volumes)
         controler['volumes'] = t_volumes + [conf_full_folder]
         controler['name'] = 'controler{}_{}'.format(name_suffix, i)
-        controler['container_name'] = 'tboquet/full7hc5controleralp'
-        controler['NV_GPU'] = '0'
+        controler['container_name'] = 'tboquet/full8c51controleralp'
+        if not cpu:
+            controler['NV_GPU'] = '0'
         controler['mode'] = '-d'
         ports = [(440 + i + port_shift, 8888)]
         controler['ports'] = ['{}:{}'.format(p1, p2) for p1, p2 in ports]
@@ -536,7 +548,7 @@ def gen_alpapp_config(name_suffix=''):
 
 def gen_all_configs(conf_folder, name_suffix='', port_shift=0,
                     root_folder=None, controlers=1, workers_sklearn=1,
-                    workers_keras=1):
+                    workers_keras=1, cpu=False):
     alpapp = gen_alpapp_config(name_suffix)
     alpdb = gen_alpdb_config(name_suffix)
     containers = gen_containers_config(conf_folder, name_suffix=name_suffix,
@@ -544,7 +556,8 @@ def gen_all_configs(conf_folder, name_suffix='', port_shift=0,
                                        root_folder=root_folder,
                                        controlers=controlers,
                                        workers_sklearn=workers_sklearn,
-                                       workers_keras=workers_keras)
+                                       workers_keras=workers_keras,
+                                       cpu=cpu)
     alpapp_json = json.dumps(alpapp, indent=4)
     alpdb_json = json.dumps(alpdb, indent=4)
     containers_json = json.dumps(containers, indent=4)

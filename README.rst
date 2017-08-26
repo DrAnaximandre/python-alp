@@ -45,23 +45,38 @@ http://python-alp.readthedocs.io/
 Quickstart
 ==========
 
-Generate a base configuration:
+Clone the repo and install the library:
 
 .. code-block:: bash
 
-    alp --verbose genconfig --outdir=/path/to/a/directory
+   git clone https://github.com/tboquet/python-alp.git
+   cd python-alp
+   python setup.py install
 
-Launche the services:
+Install the Command Line Interface dependencies:
 
 .. code-block:: bash
 
-    alp --verbose service start /path/to/a/directory
+   cd req
+   pip install -r requirements_cli.txt
+
+Generate a base configuration using an absolute path:
+
+.. code-block:: bash
+
+    alp --verbose genconfig --outdir=/path/to/a/directory --cpu
+
+Launch the services:
+
+.. code-block:: bash
+
+    alp --verbose service start /path/to/a/directory/.alp/containers.json
 
 Check the status of your containers:
 
 .. code-block:: bash
 
-    alp --verbose status /path/to/a/directory
+    alp --verbose status /path/to/a/directory/.alp/containers.json
 
 
 Log in to the Jupyter notebook you just launched in your browser @ :code:`localhost:440` using the password :code:`default`.
@@ -128,10 +143,10 @@ Launch some experiments!
 
     # put the data in the form ALP expects
     data, data_val = dict(), dict()
-    data["X"] = X_train
-    data["y"] = Y_train
-    data_val["X"] = X_test
-    data_val["y"] = Y_test
+    data["X"] = X_train[:500]
+    data["y"] = Y_train[:500]
+    data_val["X"] = X_test[:500]
+    data_val["y"] = Y_test[:500]
 
     # Define and compile the model
 
@@ -159,10 +174,10 @@ Launch some experiments!
     expe = Experiment(model)
 
     # Fit the model linked to your experiment
-    expe.fit([data], [data_val], nb_epoch=2, batch_size=batch_size)
+    results = expe.fit([data], [data_val], nb_epoch=2, batch_size=batch_size)
 
     # Predict using your model
-    expe.predict(data['X])
+    expe.predict(data['X'])
 
 
 `Get started with the tutorial series!`_ 
@@ -170,4 +185,4 @@ Launch some experiments!
 * Free software: Apache license
 
 .. _`docker setup`: http://python-alp.readthedocs.io/en/latest/dockersetup.html
-.. _`Get started with the tutorial series!`: http://python-alp.readthedocs.io/en/new_doc/Tutorials/index_tuto.html
+.. _`Get started with the tutorial series!`: http://python-alp.readthedocs.io/en/latest/Tutorials/index_tuto.html

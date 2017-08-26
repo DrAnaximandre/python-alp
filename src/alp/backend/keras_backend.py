@@ -24,6 +24,7 @@ from six.moves import zip as szip
 from ..appcom import _path_h5
 from ..appcom.utils import check_gen
 from ..backend import common as cm
+from ..celapp import RESULT_SERIALIZER
 from ..celapp import app
 
 try:  # pragma: no cover
@@ -33,7 +34,7 @@ except ImportError:  # pragma: no cover
 
 
 COMPILED_MODELS = dict()
-TO_SERIALIZE = ['custom_objects']
+TO_SERIALIZE = ['custom_objects', 'callbacks']
 
 
 # general utilities
@@ -292,6 +293,7 @@ def train(model, data, data_val, size_gen, generator=False, *args, **kwargs):
     results = dict()
     results['metrics'] = dict()
     custom_objects = None
+    callbacks = []
     fit_gen_val = False
     suf = 'val_'
 
@@ -300,6 +302,18 @@ def train(model, data, data_val, size_gen, generator=False, *args, **kwargs):
 
     # load model
     model = model_from_dict_w_opt(model, custom_objects=custom_objects)
+
+    if 'callbacks' in kwargs:
+        callbacks = kwargs.pop('callbacks')
+
+    callbacks = [deserialize(**callback)
+                 for callback in callbacks]
+
+    for i, callback in enumerate(callbacks):
+        if inspect.isfunction(callback):
+            callbacks[i] = callback()
+        else:
+            raise TypeError('Your callback is not wrapped in a function')
 
     metrics_names = model.metrics_names
     for metric in metrics_names:
@@ -331,7 +345,6 @@ def train(model, data, data_val, size_gen, generator=False, *args, **kwargs):
                             " data.")
 
     # fit the model according to the input/output type
-
     if mod_name is "Sequential" or mod_name is "Model":
         for d, dv in szip(data, data_val):
             validation = check_validation(dv)
@@ -341,6 +354,7 @@ def train(model, data, data_val, size_gen, generator=False, *args, **kwargs):
             if generator:
                 h = model.fit_generator(generator=d,
                                         validation_data=dv,
+                                        callbacks=callbacks,
                                         *args,
                                         **kwargs)
             else:
@@ -348,6 +362,7 @@ def train(model, data, data_val, size_gen, generator=False, *args, **kwargs):
                 h = model.fit(x=X,
                               y=y,
                               validation_data=dv,
+                              callbacks=callbacks,
                               *args,
                               **kwargs)
             for metric in metrics_names:
@@ -443,7 +458,7 @@ def fit(self, backend_name, backend_version, model, data, data_hash, data_val,
 
 
 @app.task(queue='keras')
-def predict(model, data, *args, **kwargs):
+def predict(model, data, async, *args, **kwargs):
     """Make predictions given a model and data
 
     Args:
@@ -454,8 +469,20 @@ def predict(model, data, *args, **kwargs):
     Returns:
         an np.array of predictions
     """
+    import alp.backend.common as cm
+    import keras.backend as K
 
     from keras.engine.training import make_batches
+
+    if K.backend() == 'tensorflow' and cm.on_worker():  # pragma: no cover
+        import tensorflow as tf
+        K.clear_session()
+        config = tf.ConfigProto(allow_soft_placement=True)
+        config.gpu_options.allow_growth = True
+        session = tf.Session(config=config)
+        K.set_session(session)
+
+    json_serializer = RESULT_SERIALIZER == 'json'
     if kwargs.get("batch_size") is None:  # pragma: no cover
         kwargs['batch_size'] = 32
 
@@ -465,11 +492,13 @@ def predict(model, data, *args, **kwargs):
 
     model_name = model['model_arch']['config'].get('class_name')
     # check if the predict function is already compiled
-    if model['mod_id'] in COMPILED_MODELS:
-        pred_function = COMPILED_MODELS[model['mod_id']]['pred']
-        model_k = COMPILED_MODELS[model['mod_id']]['model']
-        learning_phase = COMPILED_MODELS[model['mod_id']]['learning_phase']
-        output_shape = COMPILED_MODELS[model['mod_id']]['model'].output_shape
+    m_id = model['mod_id'] + model['data_id']
+
+    if m_id in COMPILED_MODELS:
+        pred_function = COMPILED_MODELS[m_id]['pred']
+        model_k = COMPILED_MODELS[m_id]['model']
+        learning_phase = COMPILED_MODELS[m_id]['learning_phase']
+        output_shape = COMPILED_MODELS[m_id]['model'].output_shape
     else:
         # get the model arch
         model_dict = model['model_arch']
@@ -484,11 +513,11 @@ def predict(model, data, *args, **kwargs):
 
         # build the prediction function
         pred_function = build_predict_func(model_k)
-        COMPILED_MODELS[model['mod_id']] = dict()
-        COMPILED_MODELS[model['mod_id']]['pred'] = pred_function
-        COMPILED_MODELS[model['mod_id']]['model'] = model_k
+        COMPILED_MODELS[m_id] = dict()
+        COMPILED_MODELS[m_id]['pred'] = pred_function
+        COMPILED_MODELS[m_id]['model'] = model_k
         learning_phase = model_k.uses_learning_phase
-        COMPILED_MODELS[model['mod_id']]['learning_phase'] = learning_phase
+        COMPILED_MODELS[m_id]['learning_phase'] = learning_phase
         output_shape = model_k.output_shape
 
     # predict according to the input/output type
@@ -518,4 +547,6 @@ def predict(model, data, *args, **kwargs):
         if isinstance(batch_prediction, list):  # pragma: no cover
             batch_prediction = batch_prediction[0]
         results_array[batch_ids] = batch_prediction
+    if async and json_serializer:
+        results_array = results_array.tolist()
     return results_array
